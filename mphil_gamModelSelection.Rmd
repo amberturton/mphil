@@ -1,0 +1,292 @@
+---
+title: "mphil_gamModelSelection"
+output:
+  html_document:
+    df_print: paged
+---
+
+### Section 1: Set Up
+```{r setup, include=FALSE}
+knitr::opts_knit$set(echo=TRUE, root.dir = normalizePath("C:/Users/s2129097/Documents/Math/forestHealth/foresthealth/foresthealth/2020dataSet/mphilFinal"))
+```
+
+
+
+- Set up libraries
+```{r, include=FALSE}
+#Library imports 
+library(tidyverse)
+library(mgcv)
+library(itsadug); 
+library(RSQLite)
+library(corrplot); 
+library(data.table); 
+library(tictoc); 
+library(parallel);  
+library(doParallel);
+library(foreach);
+library(doFuture);
+library(kableExtra);
+library(mice)
+library(mgcViz)
+library(randomForest)
+```
+- Import data and set variables to factor or numeric 
+```{r, include= FALSE}
+#Data set import 
+forest <- read.csv("forestGfi20.csv")
+
+vars.fac <- c("source", "basa_lev", "lime_low", "lime_up")
+
+other <- c( "x_utm", "y_utm", "year", "nbv_ratio")
+  
+vars.num <-c( "tree_age", "n_trees","alt_m","Es","H_spec","tmin_may",
+              "tmin_may_dv","tmin_may_lag1","tmean_veg","globrad_veg",
+              "prec_veg","et0_veg","cwb_veg","tmean_veg_dv", "globrad_veg_dv"
+              ,"prec_veg_dv", "et0_veg_dv","cwb_veg_dv" ,"tmean_veg_lag1" ,
+              "prec_veg_lag1",  "d_tmax30","d_tmax25","d_tmax0","d_tmin0",
+              "sun_veg","n_tot_nw","ac_tot_nw","n_exsum_nw","spei_3_may",
+              "spei_3_aug","spei_6_sep","depth_cm",      
+              "corg_gkg","humus_tha","n_tot_gkg","phkcl","skel_perc","sand_perc","silt_perc",
+              "clay_perc","nfk_mm","svals_molm2","tpi500", "tpi750","tpi1000",       
+              "twi25","twi50","twi100" ,"twi25_mf","twi50_mf")
+
+
+for(v in vars.fac ){
+  forest[[v]] <- as.factor(forest[[v]])
+}
+
+for(v in vars.num ){
+  forest[[v]] <- as.numeric(forest[[v]])
+}
+
+for(v in other ){
+  forest[[v]] <- as.numeric(forest[[v]])
+}
+```
+
+-set seed to 1
+```{r, include= FALSE}
+options(scipen=1000)
+set.seed(1)
+```
+
+Calculate gamma
+```{r}
+ggamma <-  log(nrow(forest))/2
+```
+
+
+
+
+### Section 2: Set up basic model with just age- not weighted
+```{r}
+formAge <- as.formula("nbv_ratio ~  s(tree_age, bs=\"cs\")" )
+
+ageModel<- bam(  formAge, 
+                 data = forest, 
+                 discrete=TRUE, 
+                 nthreads=2,
+                 gamma = ggamma, 
+                 method="fREML"
+                )
+```
+
+
+### Section 3: Set up basic model with spatio-temporal smoother- not weighted
+```{r}
+formGam0 <-  as.formula("nbv_ratio ~  te(x_utm, y_utm, year, k=c(30,20), d=c(2,1), bs=c(\"tp\",\"cs\"))+ s(tree_age, bs=\"cs\")" )
+
+b0<- bam(  formGam0, 
+           data = forest, 
+           discrete=TRUE, 
+           nthreads=2,
+           gamma = ggamma, 
+           method="fREML"
+          )
+```
+
+
+### Section 4: Include all variables 
+```{r}
+form1 <- as.formula(paste("nbv_ratio ~  te(x_utm, y_utm, year, k=c(30,20), d=c(2,1), bs=c(\"tp\",\"cs\"))+" ,paste("s(", vars.num, ",bs=\"cs\")", collapse=" + "),"+", paste("s(", vars.fac, ",bs=\"re\")", collapse=" + ")))
+```
+
+```{r}
+fullModel <- bam(  form1, 
+                   data = forest, 
+                   discrete=TRUE, 
+                   nthreads=2,
+                   gamma = ggamma, 
+                   method="fREML",
+                   select=TRUE
+          )
+
+```
+
+
+
+### Section 5: Check whether to add AR term
+ 
+```{r}
+
+rho1 <- itsadug::start_value_rho(fullModel, plot=TRUE, main = "Auto correlation for each time lag of 1 year")
+rho1
+```
+
+Residuals show high temporal correlation in the first years. This correlation becomes insignificant after 11 years. 
+This is fitting with forestry knowledge as Spruce tree usually regenerate on a 7 year cycle. 
+
+```{r}
+ 
+fullModelAR <- bam(form1, 
+                   data = forest, 
+                   discrete=TRUE, 
+                   nthreads=2,
+                   gamma = ggamma,
+                   method="fREML",
+                   select=TRUE,
+                   rho=rho1,
+                   AR.start = arstart, 
+         )
+```
+
+```{r}
+itsadug::acf_resid(fullModelAR, plot=TRUE, main = "Auto correlation for each time lag of 1 year")
+```
+
+Residuals show an improved temporal correlation and so we choose to add an AR term to the model.  
+
+### Section 6: Select variables for GAM model using cubic regression splines - without weights
+
+Cubic regression splines should naturally go to zero for varibales which are not useful to the model. We then use anova function to show which variables are most useful choosing those variables with expected degrees of freedom of over 0.6. 
+
+
+
+```{r}
+a <- anova(fullModelAR)
+```
+  
+```{r}
+a
+```
+
+```{r}
+selVals <- a$s.table[,1][which(a$s.table[,1] >0.6)]
+
+sel <- names(selVals)
+```
+
+```{r}
+sel
+```
+
+printout of sel >> 
+"s(tree_age)"       "s(H_spec)"         "s(tmin_may_lag1)" 
+ [4] "s(tmean_veg_dv)"   "s(et0_veg_dv)"     "s(tmean_veg_lag1)"
+ [7] "s(d_tmax25)"       "s(n_exsum_nw)"     "s(spei_3_may)"    
+[10] "s(phkcl)"          "s(nfk_mm)"         "s(svals_molm2)"   
+[13] "s(tpi500)"         "s(twi25)"   
+
+Create list of selected variables without smoothers
+```{r}
+sel <- c( "tree_age","H_spec","tmin_may_lag1", "tmean_veg_dv","et0_veg_dv",                      "tmean_veg_lag1", "d_tmax25", "n_exsum_nw","spei_3_may", "phkcl",                      "nfk_mm","svals_molm2", "tpi500", "twi25")
+```
+
+```{r}
+mapply(is.numeric, select(forest, sel))
+```
+Only numeric variabes selected 
+
+### Section 8: Force model to bound data between 0 and 1
+Using a beta regression model to bound predictions within (0.1)
+
+```{r}
+formGamFinal <- as.formula(paste("nbv_ratio ~  te(x_utm, y_utm, year, k=c(30,20), d=c(2,1), bs=c(\"tp\",\"cs\"))+" ,paste("s(", sel, ",bs=\"cs\", k = 20)", collapse=" + ")))
+```
+
+```{r}
+finalModel <- bam( formGamFinal, 
+                   data = forest, 
+                   discrete=TRUE, 
+                   nthreads=2,
+                   gamma = ggamma,
+                   method="fREML",
+                   family = betar,
+                   rho=rho1,
+                   AR.start = arstart 
+         )
+```
+
+
+
+
+```{r}
+gam.check(finalModel)
+```
+ 
+
+
+### Section 7: Select variables for GAM model using cubic regression splines - with weights 
+
+```{r}
+ 
+fullModelW <- bam( form1, 
+                   data = forest, 
+                   discrete=TRUE, 
+                   nthreads=2,
+                   gamma = ggamma,
+                   method="fREML",
+                   select=TRUE,
+                   rho=rho1,
+                   AR.start = arstart,
+                   weights = n_trees
+         )
+```
+
+
+```{r}
+a2 <- anova(fullModelW)
+```
+  
+```{r}
+a2
+```
+
+
+```{r}
+selValsW <- a$s.table[,1][which(a$s.table[,1] >0.6)]
+
+selW <- names(selVals)
+```
+
+```{r}
+selW
+```
+
+print out >> "s(tree_age)"       "s(H_spec)"         "s(tmin_may_lag1)" 
+ [4] "s(tmean_veg_dv)"   "s(et0_veg_dv)"     "s(tmean_veg_lag1)"
+ [7] "s(d_tmax25)"       "s(n_exsum_nw)"     "s(spei_3_may)"    
+[10] "s(phkcl)"          "s(nfk_mm)"         "s(svals_molm2)"   
+[13] "s(tpi500)"         "s(twi25)" 
+
+```{r}
+selW <- c("tree_age","H_spec","tmin_may_lag1", "tmean_veg_dv",
+          "et0_veg_dv","tmean_veg_lag1","d_tmax25","n_exsum_nw",
+          "spei_3_may", "phkcl", "nfk_mm","svals_molm2","tpi500",
+          "twi25")
+```
+
+Same selection of variables is made with weighted data- use non weighted model as final model. 
+
+
+### Section 9: Plot smoothers for final model without weights
+
+```{r}
+
+v <- getViz(finalModel)
+print(plot(v, allTerms=T), pages=10)
+
+```
+
+

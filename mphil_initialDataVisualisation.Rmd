@@ -1,0 +1,109 @@
+---
+title: "mphil_intialDataVisualisation"
+output: html_document
+---
+### Section1: Set Up
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+-Set up working directory 
+```{r, include=FALSE}
+setwd("C:/Users/s2129097/Documents/Math/forestHealth/foresthealth/foresthealth/2020dataSet/mphilFinal")
+
+```
+
+- Set up libraries
+```{r, include=FALSE}
+#Library imports 
+library(tidyverse)
+library(mgcv)
+library(itsadug); 
+library(RSQLite)
+library(corrplot); 
+library(data.table); 
+library(tictoc); 
+library(parallel);  
+library(doParallel);
+library(foreach);
+library(doFuture);
+library(kableExtra);
+library(mice)
+library(mgcViz)
+library(randomForest)
+```
+- Import data and set variables to factor or numeric 
+```{r, include= FALSE}
+#Data set import 
+forest <- read_csv("forestGfi20Ext.csv")
+
+vars.fac <- c("source", "basa_lev", "lime_low", "lime_up")
+
+other <- c( "x_utm", "y_utm", "year", "nbv_ratio")
+  
+vars.num <-c( "tree_age", "n_trees","alt_m","Es","H_spec","tmin_may",
+              "tmin_may_dv","tmin_may_lag1","tmean_veg","globrad_veg",
+              "prec_veg","et0_veg","cwb_veg","tmean_veg_dv", "globrad_veg_dv"
+              ,"prec_veg_dv", "et0_veg_dv","cwb_veg_dv" ,"tmean_veg_lag1" ,
+              "prec_veg_lag1",  "d_tmax30","d_tmax25","d_tmax0","d_tmin0",
+              "sun_veg","n_tot_nw","ac_tot_nw","n_exsum_nw","spei_3_may",
+              "spei_3_aug","spei_6_sep","depth_cm",      
+              "corg_gkg","humus_tha","n_tot_gkg","phkcl","skel_perc","sand_perc","silt_perc",
+              "clay_perc","nfk_mm","svals_molm2","tpi500", "tpi750","tpi1000",       
+              "twi25","twi50","twi100" ,"twi25_mf","twi50_mf")
+
+
+for(v in vars.fac ){
+  forest[[v]] <- as.factor(forest[[v]])
+}
+
+for(v in vars.num ){
+  forest[[v]] <- as.numeric(forest[[v]])
+}
+
+for(v in other ){
+  forest[[v]] <- as.numeric(forest[[v]])
+}
+```
+
+-set seed to 1
+```{r, include= FALSE}
+options(scipen=1000)
+set.seed(1)
+```
+
+
+
+
+### Section 2: Display average defoliation of data set over the years
+
+
+```{r}
+ggplot(forest, aes(year, nbv_ratio, group=year)) +geom_boxplot() + 
+  geom_hline(aes(yintercept=mean(nbv_ratio), color="Mean defoliation"), color="#990000", linetype="dashed")+ labs(x="Year", y="Defoliation ratio", color=NULL)+ggtitle( "Defoliation of Norway Spruce over time")+annotate("text",x=2022,y=.2,size=3,color="#990000",label=c('Mean\n defoliation'))+scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) +
+scale_y_continuous(breaks = scales::pretty_breaks(n = 10))
+```
+
+Mean defoliation of data set: 
+```{r}
+mean(forest$nbv_ratio)
+```
+
+
+Median defoliation of data set:
+
+```{r}
+median(forest$nbv_ratio)
+```
+
+
+
+
+### Section 3: Display spatial correlation
+
+
+### Section 4: Display temporal correlation 
+
+
+
+
